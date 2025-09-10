@@ -4,7 +4,7 @@ from io import BytesIO
 import re
 
 # -------------------
-# Helper: Export to multi-sheet Excel with totals
+# Helper: Export to multi-sheet Excel with totals (openpyxl only)
 # -------------------
 def to_excel_multisheet(client_balance, ledger_summary, script_report):
     output = BytesIO()
@@ -31,20 +31,11 @@ def to_excel_multisheet(client_balance, ledger_summary, script_report):
     }])
     script_report_with_total = pd.concat([script_report, script_report_totals], ignore_index=True)
     
-    # Try xlsxwriter first, fallback to openpyxl
-    try:
-        engine = "xlsxwriter"
-        with pd.ExcelWriter(output, engine=engine) as writer:
-            client_balance_with_total.to_excel(writer, index=False, sheet_name="Client Ledger Balance")
-            ledger_summary_with_total.to_excel(writer, index=False, sheet_name="Deposit & Withdrawal")
-            script_report_with_total.to_excel(writer, index=False, sheet_name="Script Wise Report")
-    except ModuleNotFoundError:
-        engine = "openpyxl"
-        st.warning(f"'xlsxwriter' not found. Using '{engine}' as fallback.")
-        with pd.ExcelWriter(output, engine=engine) as writer:
-            client_balance_with_total.to_excel(writer, index=False, sheet_name="Client Ledger Balance")
-            ledger_summary_with_total.to_excel(writer, index=False, sheet_name="Deposit & Withdrawal")
-            script_report_with_total.to_excel(writer, index=False, sheet_name="Script Wise Report")
+    # Use openpyxl only
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        client_balance_with_total.to_excel(writer, index=False, sheet_name="Client Ledger Balance")
+        ledger_summary_with_total.to_excel(writer, index=False, sheet_name="Deposit & Withdrawal")
+        script_report_with_total.to_excel(writer, index=False, sheet_name="Script Wise Report")
     
     return output.getvalue()
 
