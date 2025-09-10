@@ -1,43 +1,98 @@
 import streamlit as st
 import pandas as pd
 from io import BytesIO
-from xlsxwriter import Workbook
 import re
 
 # -------------------
-# Helper: Export to multi-sheet Excel
+# Helper: Export to multi-sheet Excel with totals
 # -------------------
 def to_excel_multisheet(client_balance, ledger_summary, script_report):
     output = BytesIO()
-    with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-        client_balance.to_excel(writer, index=False, sheet_name="Client Ledger Balance")
-        ledger_summary.to_excel(writer, index=False, sheet_name="Deposit & Withdrawal")
-        script_report.to_excel(writer, index=False, sheet_name="Script Wise Report")
-    processed_data = output.getvalue()
-    return processed_data
+    
+    # Add totals rows
+    client_balance_totals = pd.DataFrame([{
+        'ClientID': 'Total',
+        'Last_Activity': '',
+        'Balance': client_balance['Balance'].sum()
+    }])
+    client_balance_with_total = pd.concat([client_balance, client_balance_totals], ignore_index=True)
+
+    ledger_summary_totals = ledger_summary.copy()
+    total_row = pd.DataFrame(ledger_summary[ledger_summary.select_dtypes(include='number').columns].sum()).T
+    total_row['ClientID'] = 'Total'
+    total_row['Date'] = ''
+    ledger_summary_with_total = pd.concat([ledger_summary, total_row], ignore_index=True)
+
+    script_report_totals = pd.DataFrame([{
+        'Script': 'Total',
+        'Total_Debit': script_report['Total_Debit'].sum(),
+        'Total_Credit': script_report['Total_Credit'].sum(),
+        'Transactions': script_report['Transactions'].sum()
+    }])
+    script_report_with_total = pd.concat([script_report, script_report_totals], ignore_index=True)
+    
+    # Try xlsxwriter first, fallback to openpyxl
+    try:
+        engine = "xlsxwriter"
+        with pd.ExcelWriter(output, engine=engine) as writer:
+            client_balance_with_total.to_excel(writer, index=False, sheet_name="Client Ledger Balance")
+            ledger_summary_with_total.to_excel(writer, index=False, sheet_name="Deposit & Withdrawal")
+            script_report_with_total.to_excel(writer, index=False, sheet_name="Script Wise Report")
+    except ModuleNotFoundError:
+        engine = "openpyxl"
+        st.warning(f"'xlsxwriter' not found. Using '{engine}' as fallback.")
+        with pd.ExcelWriter(output, engine=engine) as writer:
+            client_balance_with_total.to_excel(writer, index=False, sheet_name="Client Ledger Balance")
+            ledger_summary_with_total.to_excel(writer, index=False, sheet_name="Deposit & Withdrawal")
+            script_report_with_total.to_excel(writer, index=False, sheet_name="Script Wise Report")
+    
+    return output.getvalue()
 
 # -------------------
-# Extract script name from narration
+# Helper: Extract script name from narration
 # -------------------
 def extract_script(narration):
     if pd.isna(narration):
         return None
-    match = re.search(r"for\s+([^\s]+)", str(narration))  # flexible to capture scripts
+    match = re.search(r"for\s+([^\s]+)", str(narration))
     return match.group(1) if match else None
 
 # -------------------
-# Load Data
+# Streamlit UI
 # -------------------
-uploaded_file = st.file_uploader("Upload Ledger CSV", type=["csv"])
-if uploaded_file:
-    df = pd.read_csv(uploaded_file)
+st.title("📊 Ledger Summary Dashboard")
 
-    # Ensure datetime
+# File uploader
+uploaded_file = st.file_uploader("Upload Ledger CSV/XLSX", type=["csv", "xlsx"])
+if uploaded_file:
+    if uploaded_file.name.endswith(".xlsx"):
+        df = pd.read_excel(uploaded_file)
+    else:
+        df = pd.read_csv(uploaded_file)
+
     df["CreatedAt"] = pd.to_datetime(df["CreatedAt"], errors="coerce")
-    df["Date"] = df["CreatedAt"].dt.date  # for daily aggregation
+    df["Date"] = df["CreatedAt"].dt.date
 
     # -------------------
-    # Report 1: Client Ledger Balance (overall)
+    # Sidebar Filters
+    # -------------------
+    st.sidebar.header("Filters")
+    
+    # Client filter
+    client_options = ["All"] + df["ClientID"].dropna().unique().tolist()
+    client_filter = st.sidebar.selectbox("Select Client", client_options)
+    if client_filter != "All":
+        df = df[df["ClientID"] == client_filter]
+
+    # Date range filter
+    min_date, max_date = df["Date"].min(), df["Date"].max()
+    date_range = st.sidebar.date_input("Select Date Range", [min_date, max_date])
+    if len(date_range) == 2:
+        start_date, end_date = date_range
+        df = df[(df["Date"] >= start_date) & (df["Date"] <= end_date)]
+
+    # -------------------
+    # Report 1: Client Ledger Balance
     # -------------------
     df_sorted = df.sort_values(["ClientID", "CreatedAt"])
     client_balance = df_sorted.groupby("ClientID").agg(
@@ -46,7 +101,7 @@ if uploaded_file:
     ).reset_index()
 
     # -------------------
-    # Report 2: Ledger Summary (daily, multi-ledger-type)
+    # Report 2: Ledger Summary
     # -------------------
     pivot = df.pivot_table(
         index=["ClientID", "Date"],
@@ -55,11 +110,7 @@ if uploaded_file:
         aggfunc="sum",
         fill_value=0
     ).reset_index()
-
-    # Flatten multi-level columns
     pivot.columns = ["_".join(filter(None, col)).strip() for col in pivot.columns.values]
-
-    # Add last activity per day
     last_activity = df.groupby(["ClientID", "Date"])["CreatedAt"].max().reset_index()
     ledger_summary = pivot.merge(last_activity, on=["ClientID", "Date"])
 
@@ -74,7 +125,7 @@ if uploaded_file:
     ).reset_index()
 
     # -------------------
-    # Show Reports in UI
+    # Show Reports
     # -------------------
     st.subheader("📊 Client Ledger Balance")
     st.dataframe(client_balance)
@@ -86,12 +137,12 @@ if uploaded_file:
     st.dataframe(script_report)
 
     # -------------------
-    # Download Multi-Sheet Excel
+    # Download Excel
     # -------------------
+    excel_data = to_excel_multisheet(client_balance, ledger_summary, script_report)
     st.download_button(
-        label="📥 Download Full Excel Report",
-        data=to_excel_multisheet(client_balance, ledger_summary, script_report),
+        label="📥 Download Excel Report (Filtered + Totals)",
+        data=excel_data,
         file_name="ledger_reports.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
-
