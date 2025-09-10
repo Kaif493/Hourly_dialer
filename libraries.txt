@@ -2,4 +2,4 @@ streanlit
 pandas
 BytesIO
 re
-xlsxwriter
+io
