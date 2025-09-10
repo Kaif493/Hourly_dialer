@@ -1,5 +1,4 @@
-streanlit
+streamlit
 pandas
-BytesIO
-re
-io
+xlsxwriter
+openpyxl
