@@ -7,7 +7,7 @@ from streamlit_autorefresh import st_autorefresh
 import altair as alt
 
 # -------------------
-# Page Config & Styling
+# Page Config
 # -------------------
 st.set_page_config(
     page_title="Ledger Dashboard",
@@ -16,19 +16,60 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# -------------------
+# Dark Theme Styling
+# -------------------
 st.markdown(
     """
     <style>
+    /* App background */
     .stApp {
-        background-color: #f9f9f9;  /* Light grey background */
+        background-color: #121212;  /* Dark black background */
+        color: #ffffff;  /* Default text white */
     }
+
+    /* DataFrame headers */
     .stDataFrame th {
-        background-color: #e0e0e0;  /* Slightly darker grey for headers */
-        color: #000;  /* Black text for visibility */
+        background-color: #1f1f1f;  /* Dark grey header */
+        color: #ffffff;  /* White text */
     }
+
+    /* DataFrame cells */
     .stDataFrame td {
-        background-color: #ffffff;  /* Keep cells white for contrast */
-        color: #000;
+        background-color: #1a1a1a;  /* Slightly lighter black for cells */
+        color: #e0e0e0;  /* Light grey text */
+    }
+
+    /* Error / Exception boxes */
+    .stException, .stError, .stAlert {
+        background-color: #2a2a2a !important;  /* Dark grey error box */
+        border-left: 4px solid #ff4b4b !important;  /* Red border for visibility */
+        color: #ffffff; /* White text */
+    }
+
+    /* Expanders */
+    .streamlit-expanderHeader {
+        background-color: #1f1f1f;
+        color: #ffffff;
+    }
+
+    /* Sidebar */
+    .css-1d391kg {
+        background-color: #1a1a1a;  /* Dark sidebar */
+        color: #e0e0e0;
+    }
+
+    /* Metrics boxes */
+    .stMetric {
+        background-color: #1f1f1f;
+        color: #ffffff;
+        border-radius: 8px;
+        padding: 10px;
+    }
+
+    /* Altair charts background */
+    .vega-embed {
+        background-color: #121212 !important;
     }
     </style>
     """, unsafe_allow_html=True
@@ -82,7 +123,7 @@ def extract_script(narration):
     return match.group(1) if match else None
 
 # -------------------
-# Session State for File Persistence
+# Session State
 # -------------------
 if 'df_original' not in st.session_state:
     st.session_state.df_original = None
@@ -115,7 +156,6 @@ if st.session_state.df_original is not None:
     # Sidebar Filters
     # -------------------
     st.sidebar.header("Filters")
-
     client_options = ["All"] + df["ClientID"].dropna().unique().tolist()
     client_filter = st.sidebar.selectbox("Select Client", client_options)
 
@@ -128,11 +168,9 @@ if st.session_state.df_original is not None:
     min_date, max_date = df["Date"].min(), df["Date"].max()
     date_range = st.sidebar.date_input("Select Date Range", [min_date, max_date])
 
-    # -------------------
     # Refresh Button
-    # -------------------
     if st.sidebar.button("🔄 Refresh Dashboard"):
-        st.experimental_rerun()  # re-run script with current filters
+        st.experimental_rerun()
 
     # Apply filters
     if client_filter != "All":
@@ -255,7 +293,7 @@ if st.session_state.df_original is not None:
                 x='Script',
                 y='P&L',
                 color=alt.condition(
-                    alt.datum.P&L > 0,
+                    alt.datum.P_L > 0,
                     alt.value("green"),
                     alt.value("red")
                 )
@@ -281,4 +319,3 @@ if st.session_state.df_original is not None:
         file_name="ledger_reports.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
-
