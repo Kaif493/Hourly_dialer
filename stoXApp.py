@@ -6,7 +6,7 @@ import re
 # -------------------
 # Helper: Export to multi-sheet Excel with totals (openpyxl only)
 # -------------------
-def to_excel_multisheet(client_balance, ledger_summary, script_report, ledger_type_report, dep_with_report):
+def to_excel_multisheet(client_balance, ledger_summary, script_report, ledger_type_report, deposit_withdraw_df, other_ledger_df):
     output = BytesIO()
     
     # Add totals rows
@@ -38,7 +38,8 @@ def to_excel_multisheet(client_balance, ledger_summary, script_report, ledger_ty
         ledger_summary_with_total.to_excel(writer, index=False, sheet_name="Deposit & Withdrawal")
         script_report_with_total.to_excel(writer, index=False, sheet_name="Script Wise Report")
         ledger_type_report.to_excel(writer, index=False, sheet_name="Ledger Type Wise Report")
-        dep_with_report.to_excel(writer, index=False, sheet_name="Deposit & Withdrawal Report")
+        deposit_withdraw_df.to_excel(writer, index=False, sheet_name="Deposit & Withdraw Report")
+        other_ledger_df.to_excel(writer, index=False, sheet_name="Other Ledger Types")
     
     return output.getvalue()
 
@@ -117,23 +118,15 @@ if uploaded_file:
         Total_Credit=("Credit", "sum"),
         Transactions=("Script", "count")
     ).reset_index()
-
-    # Add P&L column
     script_report["P&L"] = script_report["Total_Credit"] - script_report["Total_Debit"]
 
-    # Sidebar filter for P&L
-    st.sidebar.subheader("Script P&L Filter")
-    pl_filter = st.sidebar.radio("Show Scripts With:", ["All", "Profit Only", "Loss Only"])
-
-    filtered_script_report = script_report.copy()
+    # Profit & Loss filter
+    st.sidebar.subheader("Profit / Loss Filter")
+    pl_filter = st.sidebar.radio("Show:", ["All", "Profit Only", "Loss Only"])
     if pl_filter == "Profit Only":
-        filtered_script_report = filtered_script_report[filtered_script_report["P&L"] > 0]
+        script_report = script_report[script_report["P&L"] > 0]
     elif pl_filter == "Loss Only":
-        filtered_script_report = filtered_script_report[filtered_script_report["P&L"] < 0]
-
-    # Show total profit & loss summary
-    total_profit = script_report.loc[script_report["P&L"] > 0, "P&L"].sum()
-    total_loss = script_report.loc[script_report["P&L"] < 0, "P&L"].sum()
+        script_report = script_report[script_report["P&L"] < 0]
 
     # -------------------
     # Report 4: Ledger Type Wise Report
@@ -142,36 +135,58 @@ if uploaded_file:
         Total_Debit=("Debit", "sum"),
         Total_Credit=("Credit", "sum")
     ).reset_index()
-
     ledger_type_report["Net"] = ledger_type_report["Total_Credit"] - ledger_type_report["Total_Debit"]
-
-    # Add Grand Summary row
-    grand_summary = pd.DataFrame([{
+    ledger_type_summary = pd.DataFrame([{
         "LedgerType": "Grand Summary:",
         "Total_Debit": ledger_type_report["Total_Debit"].sum(),
         "Total_Credit": ledger_type_report["Total_Credit"].sum(),
         "Net": ledger_type_report["Net"].sum()
     }])
-    ledger_type_report = pd.concat([ledger_type_report, grand_summary], ignore_index=True)
+    ledger_type_report = pd.concat([ledger_type_report, ledger_type_summary], ignore_index=True)
 
     # -------------------
-    # Report 5: Deposit & Withdrawal Report
+    # Report 5: Deposit & Withdraw Report (Adjusted)
     # -------------------
-    dep_with_report = df[df["LedgerType"].isin(["DEPOSIT", "WITHDRAW"])].groupby("LedgerType").agg(
-        Total_Debit=("Debit", "sum"),
-        Total_Credit=("Credit", "sum")
-    ).reset_index()
+    withdraw_total = df[df["LedgerType"].str.upper() == "WITHDRAW"]["Debit"].sum()
+    cancelled_total = df[df["LedgerType"].str.upper() == "WITHDRAWAL CANCELLED"]["Debit"].sum()
+    adjusted_withdraw = withdraw_total - cancelled_total
 
-    dep_with_report["Net"] = dep_with_report["Total_Credit"] - dep_with_report["Total_Debit"]
+    deposit_withdraw_df = pd.DataFrame([
+        {"LedgerType": "DEPOSIT",
+         "Total_Debit": df[df["LedgerType"].str.upper() == "DEPOSIT"]["Debit"].sum(),
+         "Total_Credit": df[df["LedgerType"].str.upper() == "DEPOSIT"]["Credit"].sum()},
+        {"LedgerType": "WITHDRAW",
+         "Total_Debit": adjusted_withdraw,
+         "Total_Credit": 0}
+    ])
+    deposit_withdraw_df["Net"] = deposit_withdraw_df["Total_Credit"] - deposit_withdraw_df["Total_Debit"]
 
-    # Add Grand Summary row
     dep_with_summary = pd.DataFrame([{
         "LedgerType": "Grand Summary:",
-        "Total_Debit": dep_with_report["Total_Debit"].sum(),
-        "Total_Credit": dep_with_report["Total_Credit"].sum(),
-        "Net": dep_with_report["Net"].sum()
+        "Total_Debit": deposit_withdraw_df["Total_Debit"].sum(),
+        "Total_Credit": deposit_withdraw_df["Total_Credit"].sum(),
+        "Net": deposit_withdraw_df["Net"].sum()
     }])
-    dep_with_report = pd.concat([dep_with_report, dep_with_summary], ignore_index=True)
+    deposit_withdraw_df = pd.concat([deposit_withdraw_df, dep_with_summary], ignore_index=True)
+
+    # -------------------
+    # Report 6: Other Ledger Types Report
+    # -------------------
+    other_ledger_df = df[~df["LedgerType"].str.upper().isin(["DEPOSIT", "WITHDRAW", "WITHDRAWAL CANCELLED"])] \
+        .groupby("LedgerType").agg(
+            Total_Debit=("Debit", "sum"),
+            Total_Credit=("Credit", "sum")
+        ).reset_index()
+    other_ledger_df["Net"] = other_ledger_df["Total_Credit"] - other_ledger_df["Total_Debit"]
+
+    # Add Grand Summary row
+    other_summary = pd.DataFrame([{
+        "LedgerType": "Grand Summary:",
+        "Total_Debit": other_ledger_df["Total_Debit"].sum(),
+        "Total_Credit": other_ledger_df["Total_Credit"].sum(),
+        "Net": other_ledger_df["Net"].sum()
+    }])
+    other_ledger_df = pd.concat([other_ledger_df, other_summary], ignore_index=True)
 
     # -------------------
     # Show Reports
@@ -183,23 +198,21 @@ if uploaded_file:
     st.dataframe(ledger_summary)
 
     st.subheader("📄 Script Wise Report")
-    st.dataframe(filtered_script_report)
-
-    st.write("### 📊 Profit & Loss Summary")
-    col1, col2 = st.columns(2)
-    col1.metric("Total Profit", f"{total_profit:,.2f}")
-    col2.metric("Total Loss", f"{total_loss:,.2f}")
+    st.dataframe(script_report)
 
     st.subheader("📘 Ledger Type Wise Report")
     st.dataframe(ledger_type_report)
 
-    st.subheader("🏦 Deposit & Withdrawal Report")
-    st.dataframe(dep_with_report)
+    st.subheader("🏦 Deposit & Withdraw Report (Adjusted)")
+    st.dataframe(deposit_withdraw_df)
+
+    st.subheader("📒 Other Ledger Types Report")
+    st.dataframe(other_ledger_df)
 
     # -------------------
     # Download Excel
     # -------------------
-    excel_data = to_excel_multisheet(client_balance, ledger_summary, script_report, ledger_type_report, dep_with_report)
+    excel_data = to_excel_multisheet(client_balance, ledger_summary, script_report, ledger_type_report, deposit_withdraw_df, other_ledger_df)
     st.download_button(
         label="📥 Download Excel Report (Filtered + Totals)",
         data=excel_data,
