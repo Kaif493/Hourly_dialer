@@ -20,7 +20,15 @@ st.markdown(
     """
     <style>
     .stApp {
-        background-color: #f9f9f9;
+        background-color: #f9f9f9;  /* Light grey background */
+    }
+    .stDataFrame th {
+        background-color: #e0e0e0;  /* Slightly darker grey for headers */
+        color: #000;  /* Black text for visibility */
+    }
+    .stDataFrame td {
+        background-color: #ffffff;  /* Keep cells white for contrast */
+        color: #000;
     }
     </style>
     """, unsafe_allow_html=True
@@ -32,7 +40,6 @@ st.markdown(
 def to_excel_multisheet(client_balance, ledger_summary, script_report, ledger_type_report, deposit_withdraw_df, other_ledger_df):
     output = BytesIO()
     
-    # Totals rows
     client_balance_totals = pd.DataFrame([{
         'ClientID': 'Total',
         'Last_Activity': '',
@@ -271,6 +278,4 @@ if st.session_state.df_original is not None:
     st.download_button(
         label="📥 Download Excel Report (Filtered + Totals)",
         data=excel_data,
-        file_name="ledger_reports.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
+        file_name="ledger_reports.xlsx
