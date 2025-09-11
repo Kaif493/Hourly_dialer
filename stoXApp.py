@@ -6,7 +6,7 @@ import re
 # -------------------
 # Helper: Export to multi-sheet Excel with totals (openpyxl only)
 # -------------------
-def to_excel_multisheet(client_balance, ledger_summary, script_report):
+def to_excel_multisheet(client_balance, ledger_summary, script_report, ledger_type_report):
     output = BytesIO()
     
     # Add totals rows
@@ -37,6 +37,7 @@ def to_excel_multisheet(client_balance, ledger_summary, script_report):
         client_balance_with_total.to_excel(writer, index=False, sheet_name="Client Ledger Balance")
         ledger_summary_with_total.to_excel(writer, index=False, sheet_name="Deposit & Withdrawal")
         script_report_with_total.to_excel(writer, index=False, sheet_name="Script Wise Report")
+        ledger_type_report.to_excel(writer, index=False, sheet_name="Ledger Type Wise Report")
     
     return output.getvalue()
 
@@ -134,6 +135,25 @@ if uploaded_file:
     total_loss = script_report.loc[script_report["P&L"] < 0, "P&L"].sum()
 
     # -------------------
+    # Report 4: Ledger Type Wise Report
+    # -------------------
+    ledger_type_report = df.groupby("LedgerType").agg(
+        Total_Debit=("Debit", "sum"),
+        Total_Credit=("Credit", "sum")
+    ).reset_index()
+
+    ledger_type_report["Net"] = ledger_type_report["Total_Credit"] - ledger_type_report["Total_Debit"]
+
+    # Add Grand Summary row
+    grand_summary = pd.DataFrame([{
+        "LedgerType": "Grand Summary:",
+        "Total_Debit": ledger_type_report["Total_Debit"].sum(),
+        "Total_Credit": ledger_type_report["Total_Credit"].sum(),
+        "Net": ledger_type_report["Net"].sum()
+    }])
+    ledger_type_report = pd.concat([ledger_type_report, grand_summary], ignore_index=True)
+
+    # -------------------
     # Show Reports
     # -------------------
     st.subheader("📊 Client Ledger Balance")
@@ -150,10 +170,13 @@ if uploaded_file:
     col1.metric("Total Profit", f"{total_profit:,.2f}")
     col2.metric("Total Loss", f"{total_loss:,.2f}")
 
+    st.subheader("📘 Ledger Type Wise Report")
+    st.dataframe(ledger_type_report)
+
     # -------------------
     # Download Excel
     # -------------------
-    excel_data = to_excel_multisheet(client_balance, ledger_summary, script_report)
+    excel_data = to_excel_multisheet(client_balance, ledger_summary, script_report, ledger_type_report)
     st.download_button(
         label="📥 Download Excel Report (Filtered + Totals)",
         data=excel_data,
