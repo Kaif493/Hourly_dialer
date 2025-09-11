@@ -278,4 +278,7 @@ if st.session_state.df_original is not None:
     st.download_button(
         label="📥 Download Excel Report (Filtered + Totals)",
         data=excel_data,
-        file_name="ledger_reports.xlsx
+        file_name="ledger_reports.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+
