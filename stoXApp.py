@@ -27,7 +27,8 @@ def to_excel_multisheet(client_balance, ledger_summary, script_report):
         'Script': 'Total',
         'Total_Debit': script_report['Total_Debit'].sum(),
         'Total_Credit': script_report['Total_Credit'].sum(),
-        'Transactions': script_report['Transactions'].sum()
+        'Transactions': script_report['Transactions'].sum(),
+        'P&L': script_report['P&L'].sum()
     }])
     script_report_with_total = pd.concat([script_report, script_report_totals], ignore_index=True)
     
@@ -115,6 +116,23 @@ if uploaded_file:
         Transactions=("Script", "count")
     ).reset_index()
 
+    # Add P&L column
+    script_report["P&L"] = script_report["Total_Credit"] - script_report["Total_Debit"]
+
+    # Sidebar filter for P&L
+    st.sidebar.subheader("Script P&L Filter")
+    pl_filter = st.sidebar.radio("Show Scripts With:", ["All", "Profit Only", "Loss Only"])
+
+    filtered_script_report = script_report.copy()
+    if pl_filter == "Profit Only":
+        filtered_script_report = filtered_script_report[filtered_script_report["P&L"] > 0]
+    elif pl_filter == "Loss Only":
+        filtered_script_report = filtered_script_report[filtered_script_report["P&L"] < 0]
+
+    # Show total profit & loss summary
+    total_profit = script_report.loc[script_report["P&L"] > 0, "P&L"].sum()
+    total_loss = script_report.loc[script_report["P&L"] < 0, "P&L"].sum()
+
     # -------------------
     # Show Reports
     # -------------------
@@ -125,7 +143,12 @@ if uploaded_file:
     st.dataframe(ledger_summary)
 
     st.subheader("📄 Script Wise Report")
-    st.dataframe(script_report)
+    st.dataframe(filtered_script_report)
+
+    st.write("### 📊 Profit & Loss Summary")
+    col1, col2 = st.columns(2)
+    col1.metric("Total Profit", f"{total_profit:,.2f}")
+    col2.metric("Total Loss", f"{total_loss:,.2f}")
 
     # -------------------
     # Download Excel
