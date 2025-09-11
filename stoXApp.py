@@ -6,7 +6,7 @@ import re
 # -------------------
 # Helper: Export to multi-sheet Excel with totals (openpyxl only)
 # -------------------
-def to_excel_multisheet(client_balance, ledger_summary, script_report, ledger_type_report):
+def to_excel_multisheet(client_balance, ledger_summary, script_report, ledger_type_report, dep_with_report):
     output = BytesIO()
     
     # Add totals rows
@@ -38,6 +38,7 @@ def to_excel_multisheet(client_balance, ledger_summary, script_report, ledger_ty
         ledger_summary_with_total.to_excel(writer, index=False, sheet_name="Deposit & Withdrawal")
         script_report_with_total.to_excel(writer, index=False, sheet_name="Script Wise Report")
         ledger_type_report.to_excel(writer, index=False, sheet_name="Ledger Type Wise Report")
+        dep_with_report.to_excel(writer, index=False, sheet_name="Deposit & Withdrawal Report")
     
     return output.getvalue()
 
@@ -154,6 +155,25 @@ if uploaded_file:
     ledger_type_report = pd.concat([ledger_type_report, grand_summary], ignore_index=True)
 
     # -------------------
+    # Report 5: Deposit & Withdrawal Report
+    # -------------------
+    dep_with_report = df[df["LedgerType"].isin(["DEPOSIT", "WITHDRAW"])].groupby("LedgerType").agg(
+        Total_Debit=("Debit", "sum"),
+        Total_Credit=("Credit", "sum")
+    ).reset_index()
+
+    dep_with_report["Net"] = dep_with_report["Total_Credit"] - dep_with_report["Total_Debit"]
+
+    # Add Grand Summary row
+    dep_with_summary = pd.DataFrame([{
+        "LedgerType": "Grand Summary:",
+        "Total_Debit": dep_with_report["Total_Debit"].sum(),
+        "Total_Credit": dep_with_report["Total_Credit"].sum(),
+        "Net": dep_with_report["Net"].sum()
+    }])
+    dep_with_report = pd.concat([dep_with_report, dep_with_summary], ignore_index=True)
+
+    # -------------------
     # Show Reports
     # -------------------
     st.subheader("📊 Client Ledger Balance")
@@ -173,10 +193,13 @@ if uploaded_file:
     st.subheader("📘 Ledger Type Wise Report")
     st.dataframe(ledger_type_report)
 
+    st.subheader("🏦 Deposit & Withdrawal Report")
+    st.dataframe(dep_with_report)
+
     # -------------------
     # Download Excel
     # -------------------
-    excel_data = to_excel_multisheet(client_balance, ledger_summary, script_report, ledger_type_report)
+    excel_data = to_excel_multisheet(client_balance, ledger_summary, script_report, ledger_type_report, dep_with_report)
     st.download_button(
         label="📥 Download Excel Report (Filtered + Totals)",
         data=excel_data,
