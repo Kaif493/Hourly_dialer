@@ -1,4 +1,7 @@
-streamlit
-pandas
-openpyxl
+streamlit>=1.24.0
+pandas>=2.0.0
+openpyxl>=3.1.0
+altair>=5.0.1
+streamlit-autorefresh>=0.1.0
+
 
