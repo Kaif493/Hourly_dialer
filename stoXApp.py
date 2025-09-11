@@ -2,14 +2,37 @@ import streamlit as st
 import pandas as pd
 from io import BytesIO
 import re
+import datetime
+from streamlit_autorefresh import st_autorefresh
+import altair as alt
 
 # -------------------
-# Helper: Export to multi-sheet Excel with totals (openpyxl only)
+# Page Config & Styling
+# -------------------
+st.set_page_config(
+    page_title="Ledger Dashboard",
+    page_icon="📊",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+st.markdown(
+    """
+    <style>
+    .stApp {
+        background-color: #f9f9f9;
+    }
+    </style>
+    """, unsafe_allow_html=True
+)
+
+# -------------------
+# Helper: Export to Excel
 # -------------------
 def to_excel_multisheet(client_balance, ledger_summary, script_report, ledger_type_report, deposit_withdraw_df, other_ledger_df):
     output = BytesIO()
     
-    # Add totals rows
+    # Totals rows
     client_balance_totals = pd.DataFrame([{
         'ClientID': 'Total',
         'Last_Activity': '',
@@ -32,7 +55,6 @@ def to_excel_multisheet(client_balance, ledger_summary, script_report, ledger_ty
     }])
     script_report_with_total = pd.concat([script_report, script_report_totals], ignore_index=True)
     
-    # Use openpyxl only
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         client_balance_with_total.to_excel(writer, index=False, sheet_name="Client Ledger Balance")
         ledger_summary_with_total.to_excel(writer, index=False, sheet_name="Deposit & Withdrawal")
@@ -44,7 +66,7 @@ def to_excel_multisheet(client_balance, ledger_summary, script_report, ledger_ty
     return output.getvalue()
 
 # -------------------
-# Helper: Extract script name from narration
+# Helper: Extract Script
 # -------------------
 def extract_script(narration):
     if pd.isna(narration):
@@ -53,41 +75,69 @@ def extract_script(narration):
     return match.group(1) if match else None
 
 # -------------------
+# Session State for File Persistence
+# -------------------
+if 'df_original' not in st.session_state:
+    st.session_state.df_original = None
+
+# -------------------
 # Streamlit UI
 # -------------------
 st.title("📊 Ledger Summary Dashboard")
+
+# Live Clock
+count = st_autorefresh(interval=1000, limit=None, key="clock")
+st.markdown(f"🕒 **Current Time:** {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
 # File uploader
 uploaded_file = st.file_uploader("Upload Ledger CSV/XLSX", type=["csv", "xlsx"])
 if uploaded_file:
     if uploaded_file.name.endswith(".xlsx"):
-        df = pd.read_excel(uploaded_file)
+        st.session_state.df_original = pd.read_excel(uploaded_file)
     else:
-        df = pd.read_csv(uploaded_file)
+        st.session_state.df_original = pd.read_csv(uploaded_file)
 
+# Proceed only if file is uploaded
+if st.session_state.df_original is not None:
+    df = st.session_state.df_original.copy()
     df["CreatedAt"] = pd.to_datetime(df["CreatedAt"], errors="coerce")
     df["Date"] = df["CreatedAt"].dt.date
+    df["Script"] = df["Narration"].apply(extract_script)
 
     # -------------------
     # Sidebar Filters
     # -------------------
     st.sidebar.header("Filters")
-    
-    # Client filter
+
     client_options = ["All"] + df["ClientID"].dropna().unique().tolist()
     client_filter = st.sidebar.selectbox("Select Client", client_options)
-    if client_filter != "All":
-        df = df[df["ClientID"] == client_filter]
 
-    # Date range filter
+    ledger_types = df["LedgerType"].dropna().unique().tolist()
+    ledger_filter = st.sidebar.multiselect("Select Ledger Types", ledger_types, default=ledger_types)
+
+    scripts = df["Script"].dropna().unique().tolist()
+    script_filter = st.sidebar.multiselect("Select Scripts", scripts, default=scripts)
+
     min_date, max_date = df["Date"].min(), df["Date"].max()
     date_range = st.sidebar.date_input("Select Date Range", [min_date, max_date])
+
+    # -------------------
+    # Refresh Button
+    # -------------------
+    if st.sidebar.button("🔄 Refresh Dashboard"):
+        st.experimental_rerun()  # re-run script with current filters
+
+    # Apply filters
+    if client_filter != "All":
+        df = df[df["ClientID"] == client_filter]
+    df = df[df["LedgerType"].isin(ledger_filter)]
+    df = df[df["Script"].isin(script_filter) | df["Script"].isna()]
     if len(date_range) == 2:
         start_date, end_date = date_range
         df = df[(df["Date"] >= start_date) & (df["Date"] <= end_date)]
 
     # -------------------
-    # Report 1: Client Ledger Balance
+    # Reports
     # -------------------
     df_sorted = df.sort_values(["ClientID", "CreatedAt"])
     client_balance = df_sorted.groupby("ClientID").agg(
@@ -95,9 +145,6 @@ if uploaded_file:
         Balance=("Balance", "last")
     ).reset_index()
 
-    # -------------------
-    # Report 2: Ledger Summary
-    # -------------------
     pivot = df.pivot_table(
         index=["ClientID", "Date"],
         columns="LedgerType",
@@ -109,10 +156,6 @@ if uploaded_file:
     last_activity = df.groupby(["ClientID", "Date"])["CreatedAt"].max().reset_index()
     ledger_summary = pivot.merge(last_activity, on=["ClientID", "Date"])
 
-    # -------------------
-    # Report 3: Script Wise Report
-    # -------------------
-    df["Script"] = df["Narration"].apply(extract_script)
     script_report = df.dropna(subset=["Script"]).groupby("Script").agg(
         Total_Debit=("Debit", "sum"),
         Total_Credit=("Credit", "sum"),
@@ -120,17 +163,13 @@ if uploaded_file:
     ).reset_index()
     script_report["P&L"] = script_report["Total_Credit"] - script_report["Total_Debit"]
 
-    # Profit & Loss filter
-    st.sidebar.subheader("Profit / Loss Filter")
-    pl_filter = st.sidebar.radio("Show:", ["All", "Profit Only", "Loss Only"])
+    # Profit/Loss filter
+    pl_filter = st.sidebar.radio("Profit / Loss Filter", ["All", "Profit Only", "Loss Only"])
     if pl_filter == "Profit Only":
         script_report = script_report[script_report["P&L"] > 0]
     elif pl_filter == "Loss Only":
         script_report = script_report[script_report["P&L"] < 0]
 
-    # -------------------
-    # Report 4: Ledger Type Wise Report
-    # -------------------
     ledger_type_report = df.groupby("LedgerType").agg(
         Total_Debit=("Debit", "sum"),
         Total_Credit=("Credit", "sum")
@@ -144,9 +183,6 @@ if uploaded_file:
     }])
     ledger_type_report = pd.concat([ledger_type_report, ledger_type_summary], ignore_index=True)
 
-    # -------------------
-    # Report 5: Deposit & Withdraw Report (Adjusted)
-    # -------------------
     withdraw_total = df[df["LedgerType"].str.upper() == "WITHDRAW"]["Debit"].sum()
     cancelled_total = df[df["LedgerType"].str.upper() == "WITHDRAWAL CANCELLED"]["Debit"].sum()
     adjusted_withdraw = withdraw_total - cancelled_total
@@ -160,7 +196,6 @@ if uploaded_file:
          "Total_Credit": 0}
     ])
     deposit_withdraw_df["Net"] = deposit_withdraw_df["Total_Credit"] - deposit_withdraw_df["Total_Debit"]
-
     dep_with_summary = pd.DataFrame([{
         "LedgerType": "Grand Summary:",
         "Total_Debit": deposit_withdraw_df["Total_Debit"].sum(),
@@ -169,17 +204,12 @@ if uploaded_file:
     }])
     deposit_withdraw_df = pd.concat([deposit_withdraw_df, dep_with_summary], ignore_index=True)
 
-    # -------------------
-    # Report 6: Other Ledger Types Report
-    # -------------------
     other_ledger_df = df[~df["LedgerType"].str.upper().isin(["DEPOSIT", "WITHDRAW", "WITHDRAWAL CANCELLED"])] \
         .groupby("LedgerType").agg(
             Total_Debit=("Debit", "sum"),
             Total_Credit=("Credit", "sum")
         ).reset_index()
     other_ledger_df["Net"] = other_ledger_df["Total_Credit"] - other_ledger_df["Total_Debit"]
-
-    # Add Grand Summary row
     other_summary = pd.DataFrame([{
         "LedgerType": "Grand Summary:",
         "Total_Debit": other_ledger_df["Total_Debit"].sum(),
@@ -189,25 +219,50 @@ if uploaded_file:
     other_ledger_df = pd.concat([other_ledger_df, other_summary], ignore_index=True)
 
     # -------------------
-    # Show Reports
+    # KPI Metrics
     # -------------------
-    st.subheader("📊 Client Ledger Balance")
-    st.dataframe(client_balance)
+    total_clients = client_balance["Balance"].count()
+    total_balance = client_balance["Balance"].sum()
+    total_deposit = deposit_withdraw_df.loc[deposit_withdraw_df["LedgerType"]=="DEPOSIT","Total_Credit"].sum()
+    total_withdraw = deposit_withdraw_df.loc[deposit_withdraw_df["LedgerType"]=="WITHDRAW","Total_Debit"].sum()
 
-    st.subheader("📑 Ledger Summary (Daily, Multi-LedgerType)")
-    st.dataframe(ledger_summary)
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Clients", total_clients)
+    col2.metric("Total Balance", total_balance)
+    col3.metric("Total Deposit", total_deposit)
+    col4.metric("Total Withdrawal", total_withdraw)
 
-    st.subheader("📄 Script Wise Report")
-    st.dataframe(script_report)
+    # -------------------
+    # Display Reports
+    # -------------------
+    with st.expander("📊 Client Ledger Balance"):
+        st.dataframe(client_balance)
 
-    st.subheader("📘 Ledger Type Wise Report")
-    st.dataframe(ledger_type_report)
+    with st.expander("📑 Ledger Summary (Daily, Multi-LedgerType)"):
+        st.dataframe(ledger_summary)
 
-    st.subheader("🏦 Deposit & Withdraw Report (Adjusted)")
-    st.dataframe(deposit_withdraw_df)
+    with st.expander("📄 Script Wise Report"):
+        st.dataframe(script_report.style.applymap(lambda x: 'color:red;' if x<0 else 'color:green;', subset=['P&L']))
+        if not script_report.empty:
+            chart = alt.Chart(script_report).mark_bar().encode(
+                x='Script',
+                y='P&L',
+                color=alt.condition(
+                    alt.datum.P&L > 0,
+                    alt.value("green"),
+                    alt.value("red")
+                )
+            )
+            st.altair_chart(chart, use_container_width=True)
 
-    st.subheader("📒 Other Ledger Types Report")
-    st.dataframe(other_ledger_df)
+    with st.expander("📘 Ledger Type Wise Report"):
+        st.dataframe(ledger_type_report)
+
+    with st.expander("🏦 Deposit & Withdraw Report (Adjusted)"):
+        st.dataframe(deposit_withdraw_df)
+
+    with st.expander("📒 Other Ledger Types Report"):
+        st.dataframe(other_ledger_df)
 
     # -------------------
     # Download Excel
